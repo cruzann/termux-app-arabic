@@ -35,11 +35,13 @@ public class ArabicRendererHelperTest {
     }
 
     @Test
-    public void formsLamAlefLigature() {
+    public void keepsLamAlefAdjacentWithoutInsertingBlankCells() {
         ArabicRendererHelper.LineResult result = render("السلام");
         String visual = new String(result.text);
 
-        assertTrue("Expected connected Lam-Alef ligature", visual.indexOf('\uFEFC') >= 0);
+        assertTrue("Expected shaped Lam glyph", visual.indexOf('\uFEE0') >= 0);
+        assertTrue("Expected shaped Alef glyph", visual.indexOf('\uFE8E') >= 0);
+        assertEquals("Shaping must not inject spaces into a word", -1, visual.indexOf(' '));
     }
 
     @Test
