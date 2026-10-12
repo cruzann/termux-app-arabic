@@ -112,25 +112,29 @@ public class ArabicRendererHelper {
             }
 
             int count = bidi.getRunCount();
-            byte[] levels = new byte[count];
-            Integer[] runs = new Integer[count];
-            for (int i = 0; i < count; i++) {
-                levels[i] = (byte) bidi.getRunLevel(i);
-                runs[i] = i;
-            }
-            Bidi.reorderVisually(levels, 0, runs, 0, count);
 
+            // java.text.Bidi exposes runs in visual order. Do not reorder the
+            // run indices again: doing so reverses mixed Arabic/Latin text twice.
             int visualIndex = 0;
-            for (int i = 0; i < count; i++) {
-                int index = runs[i];
+            for (int index = 0; index < count; index++) {
                 int runStart = bidi.getRunStart(index);
                 int runLimit = bidi.getRunLimit(index);
                 int level = bidi.getRunLevel(index);
                 if ((level & 1) != 0) { // RTL run
-                    for (int j = runLimit - 1; j >= runStart; j--) {
-                        visualText[visualIndex] = mirrorChar(text.charAt(j));
-                        map[visualIndex] = j;
-                        visualIndex++;
+                    // Reverse grapheme-like clusters, not code units, so tashkeel
+                    // stays attached to its Arabic base letter.
+                    int j = runLimit - 1;
+                    while (j >= runStart) {
+                        int clusterStart = j;
+                        while (clusterStart > runStart && isTashkeel(text.charAt(clusterStart))) {
+                            clusterStart--;
+                        }
+                        for (int k = clusterStart; k <= j; k++) {
+                            visualText[visualIndex] = mirrorChar(text.charAt(k));
+                            map[visualIndex] = k;
+                            visualIndex++;
+                        }
+                        j = clusterStart - 1;
                     }
                 } else { // LTR run
                     for (int j = runStart; j < runLimit; j++) {
@@ -222,101 +226,67 @@ public class ArabicRendererHelper {
     }
 
     private static void shapeArabic(char[] text, char prevChar, char nextChar) {
-        for (int i = 0; i < text.length; i++) {
-            int gIdx = getGlyphIndex(text[i]);
-            if (gIdx == -1) continue;
+        // Keep the original logical text immutable during shaping. Mutating the
+        // input while inspecting neighbors caused already-shaped presentation
+        // forms to be mistaken for non-Arabic characters, breaking joining.
+        final char[] original = text.clone();
 
-            boolean connectRight = false;
-            boolean connectLeft = false;
+        for (int i = 0; i < original.length; i++) {
+            int glyphIndex = getGlyphIndex(original[i]);
+            if (glyphIndex < 0) continue;
 
-            // Check right connectivity (previous logical char)
-            boolean foundRight = false;
-            for (int j = i - 1; j >= 0; j--) {
-                char prev = text[j];
-                if (isTashkeel(prev)) continue;
-                int prevIdx = getGlyphIndex(prev);
-                if (prevIdx != -1) {
-                    if (ARABIC_GLYPHS[prevIdx][5] == 2) {
-                        connectRight = true;
-                    }
-                }
-                foundRight = true;
-                break;
-            }
-            if (!foundRight && prevChar != 0 && !isTashkeel(prevChar)) {
-                int prevIdx = getGlyphIndex(prevChar);
-                if (prevIdx != -1) {
-                    if (ARABIC_GLYPHS[prevIdx][5] == 2) {
-                        connectRight = true;
-                    }
-                }
-            }
+            int previousIndex = i - 1;
+            while (previousIndex >= 0 && isTashkeel(original[previousIndex])) previousIndex--;
+            char previousChar = previousIndex >= 0 ? original[previousIndex] : prevChar;
+            int previousGlyph = getGlyphIndex(previousChar);
+            // The character to the right must be dual-joining for this letter
+            // to connect to it on its right side.
+            boolean connectRight = previousGlyph >= 0 && ARABIC_GLYPHS[previousGlyph][5] == 2;
 
-            // Check left connectivity (next logical char)
-            boolean foundLeft = false;
-            for (int j = i + 1; j < text.length; j++) {
-                char next = text[j];
-                if (isTashkeel(next)) continue;
-                int nextIdx = getGlyphIndex(next);
-                if (nextIdx != -1) {
-                    connectLeft = true;
-                }
-                foundLeft = true;
-                break;
-            }
-            if (!foundLeft && nextChar != 0 && !isTashkeel(nextChar)) {
-                int nextIdx = getGlyphIndex(nextChar);
-                if (nextIdx != -1) {
-                    connectLeft = true;
-                }
-            }
+            int nextIndex = i + 1;
+            while (nextIndex < original.length && isTashkeel(original[nextIndex])) nextIndex++;
+            char followingChar = nextIndex < original.length ? original[nextIndex] : nextChar;
+            int followingGlyph = getGlyphIndex(followingChar);
+            // The character to the left must be able to join on its right;
+            // non-joining hamza must not create a false connection.
+            boolean connectLeft = followingGlyph >= 0 && ARABIC_GLYPHS[followingGlyph][5] != 0;
 
-            int type = ARABIC_GLYPHS[gIdx][5];
-            if (type == 0) { // No connections (Hamza)
-                text[i] = ARABIC_GLYPHS[gIdx][1];
-            } else if (type == 1) { // Connects right only
-                if (connectRight) text[i] = ARABIC_GLYPHS[gIdx][4];
-                else text[i] = ARABIC_GLYPHS[gIdx][1];
-            } else if (type == 2) { // Connects both sides
-                if (connectRight && connectLeft) text[i] = ARABIC_GLYPHS[gIdx][3];
-                else if (connectRight) text[i] = ARABIC_GLYPHS[gIdx][4];
-                else if (connectLeft) text[i] = ARABIC_GLYPHS[gIdx][2];
-                else text[i] = ARABIC_GLYPHS[gIdx][1];
+            int joiningType = ARABIC_GLYPHS[glyphIndex][5];
+            if (joiningType == 0) {
+                text[i] = ARABIC_GLYPHS[glyphIndex][1];
+            } else if (joiningType == 1) {
+                text[i] = connectRight ? ARABIC_GLYPHS[glyphIndex][4] : ARABIC_GLYPHS[glyphIndex][1];
+            } else {
+                if (connectRight && connectLeft) text[i] = ARABIC_GLYPHS[glyphIndex][3];
+                else if (connectRight) text[i] = ARABIC_GLYPHS[glyphIndex][4];
+                else if (connectLeft) text[i] = ARABIC_GLYPHS[glyphIndex][2];
+                else text[i] = ARABIC_GLYPHS[glyphIndex][1];
             }
         }
-        
-        // Handle Lam-Alef ligatures
-        for (int i = 0; i < text.length - 1; i++) {
-            char c = text[i];
-            if (c == '\uFEDD' || c == '\uFEDE') { // Lam Initial or Lam Medial
-                // Find next non-tashkeel
-                int nextIdx = -1;
-                for (int j = i + 1; j < text.length; j++) {
-                    if (!isTashkeel(text[j])) {
-                        nextIdx = j;
-                        break;
-                    }
-                }
-                if (nextIdx != -1) {
-                    char next = text[nextIdx];
-                    char ligature = 0;
-                    if (c == '\uFEDD') { // Lam Initial (no right connection)
-                        if (next == '\uFE8E') ligature = '\uFEFB'; // Alef Final -> Lam-Alef Isolated
-                        else if (next == '\uFE82') ligature = '\uFEF5'; // Alef Madda Final -> Lam-Alef Madda Isolated
-                        else if (next == '\uFE84') ligature = '\uFEF7'; // Alef Hamza Above Final -> Lam-Alef Hamza Above Iso
-                        else if (next == '\uFE88') ligature = '\uFEF9'; // Alef Hamza Below Final -> Lam-Alef Hamza Below Iso
-                    } else if (c == '\uFEDE') { // Lam Medial (has right connection)
-                        if (next == '\uFE8E') ligature = '\uFEFC'; // Alef Final -> Lam-Alef Final
-                        else if (next == '\uFE82') ligature = '\uFEF6';
-                        else if (next == '\uFE84') ligature = '\uFEF8';
-                        else if (next == '\uFE88') ligature = '\uFEFA';
-                    }
-                    if (ligature != 0) {
-                        text[i] = ligature;
-                        text[nextIdx] = '\u0020'; // Replace Alef with a space to preserve length and array mapping
-                    }
-                }
-            }
+
+        // Lam-alef ligatures must be based on the original logical characters,
+        // but use the shaped lam to determine isolated versus connected form.
+        for (int i = 0; i < original.length - 1; i++) {
+            if (original[i] != '\\u0644') continue;
+
+            int alefIndex = i + 1;
+            while (alefIndex < original.length && isTashkeel(original[alefIndex])) alefIndex++;
+            if (alefIndex >= original.length) continue;
+
+            char alef = original[alefIndex];
+            boolean isMadda = alef == '\\u0622';
+            boolean isHamzaAbove = alef == '\\u0623';
+            boolean isHamzaBelow = alef == '\\u0625';
+            boolean isAlef = alef == '\\u0627';
+            if (!isMadda && !isHamzaAbove && !isHamzaBelow && !isAlef) continue;
+
+            boolean connected = text[i] == '\\uFEDE' || text[i] == '\\uFEE0';
+            if (isMadda) text[i] = connected ? '\\uFEF6' : '\\uFEF5';
+            else if (isHamzaAbove) text[i] = connected ? '\\uFEF8' : '\\uFEF7';
+            else if (isHamzaBelow) text[i] = connected ? '\\uFEFA' : '\\uFEF9';
+            else text[i] = connected ? '\\uFEFC' : '\\uFEFB';
+
+            // Keep the terminal's fixed cell positions and character mapping.
+            text[alefIndex] = ' ';
         }
-    }
-}
+    }}
