@@ -53,6 +53,27 @@ public class ArabicRendererHelperTest {
     }
 
     @Test
+    public void keepsBoxDrawingBordersInTheirOriginalColumns() {
+        String input = "│  جسر عربي v1.0  │";
+        ArabicRendererHelper.LineResult result = render(input);
+        String visual = new String(result.text);
+
+        assertEquals("The left frame border must stay in column zero", '│', visual.charAt(0));
+        assertEquals("The right frame border must stay in the last column", '│', visual.charAt(input.length() - 1));
+        assertEquals("Bidi rendering must preserve terminal cell count", input.length(), visual.length());
+    }
+
+    @Test
+    public void keepsShellQuotesAndLatinCommandAtTheirOriginalEdges() {
+        String input = "echo 'السلام عليكم'";
+        ArabicRendererHelper.LineResult result = render(input);
+        String visual = new String(result.text);
+
+        assertTrue("The shell command must remain at the left edge", visual.startsWith("echo '"));
+        assertTrue("The closing quote must remain at the original right edge", visual.endsWith("'"));
+    }
+
+    @Test
     public void keepsTashkeelAttachedToItsArabicBase() {
         ArabicRendererHelper.LineResult result = render("بَت");
         String visual = new String(result.text);
