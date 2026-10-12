@@ -68,9 +68,9 @@ public class ArabicRendererHelper {
             return result;
         }
 
-        // Bidi analysis must use the original Unicode characters. Unicode
-        // Arabic Presentation Forms are treated as already visually ordered
-        // by java.text.Bidi, which can make Arabic output appear reversed.
+        // Analyze direction from the original logical Unicode characters,
+        // then apply the resulting visual order to the shaped glyphs. This also
+        // keeps the visual-to-logical map aligned with terminal cell positions.
         char[] logical = new char[activeCount];
         char[] shaped = new char[activeCount];
         System.arraycopy(text, 0, logical, 0, activeCount);
@@ -270,30 +270,6 @@ public class ArabicRendererHelper {
             }
         }
 
-        // Lam-alef ligatures must be based on the original logical characters,
-        // but use the shaped lam to determine isolated versus connected form.
-        for (int i = 0; i < original.length - 1; i++) {
-            if (original[i] != '\u0644') continue;
 
-            int alefIndex = i + 1;
-            while (alefIndex < original.length && isTashkeel(original[alefIndex])) alefIndex++;
-            if (alefIndex >= original.length) continue;
-
-            char alef = original[alefIndex];
-            boolean isMadda = alef == '\u0622';
-            boolean isHamzaAbove = alef == '\u0623';
-            boolean isHamzaBelow = alef == '\u0625';
-            boolean isAlef = alef == '\u0627';
-            if (!isMadda && !isHamzaAbove && !isHamzaBelow && !isAlef) continue;
-
-            boolean connected = text[i] == '\uFEDE' || text[i] == '\uFEE0';
-            if (isMadda) text[i] = connected ? '\uFEF6' : '\uFEF5';
-            else if (isHamzaAbove) text[i] = connected ? '\uFEF8' : '\uFEF7';
-            else if (isHamzaBelow) text[i] = connected ? '\uFEFA' : '\uFEF9';
-            else text[i] = connected ? '\uFEFC' : '\uFEFB';
-
-            // Keep the terminal's fixed cell positions and character mapping.
-            text[alefIndex] = ' ';
-        }
     }
 }
