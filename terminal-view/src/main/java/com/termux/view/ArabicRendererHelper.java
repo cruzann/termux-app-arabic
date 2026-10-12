@@ -267,26 +267,27 @@ public class ArabicRendererHelper {
         // Lam-alef ligatures must be based on the original logical characters,
         // but use the shaped lam to determine isolated versus connected form.
         for (int i = 0; i < original.length - 1; i++) {
-            if (original[i] != '\\u0644') continue;
+            if (original[i] != '\u0644') continue;
 
             int alefIndex = i + 1;
             while (alefIndex < original.length && isTashkeel(original[alefIndex])) alefIndex++;
             if (alefIndex >= original.length) continue;
 
             char alef = original[alefIndex];
-            boolean isMadda = alef == '\\u0622';
-            boolean isHamzaAbove = alef == '\\u0623';
-            boolean isHamzaBelow = alef == '\\u0625';
-            boolean isAlef = alef == '\\u0627';
+            boolean isMadda = alef == '\u0622';
+            boolean isHamzaAbove = alef == '\u0623';
+            boolean isHamzaBelow = alef == '\u0625';
+            boolean isAlef = alef == '\u0627';
             if (!isMadda && !isHamzaAbove && !isHamzaBelow && !isAlef) continue;
 
-            boolean connected = text[i] == '\\uFEDE' || text[i] == '\\uFEE0';
-            if (isMadda) text[i] = connected ? '\\uFEF6' : '\\uFEF5';
-            else if (isHamzaAbove) text[i] = connected ? '\\uFEF8' : '\\uFEF7';
-            else if (isHamzaBelow) text[i] = connected ? '\\uFEFA' : '\\uFEF9';
-            else text[i] = connected ? '\\uFEFC' : '\\uFEFB';
+            boolean connected = text[i] == '\uFEDE' || text[i] == '\uFEE0';
+            if (isMadda) text[i] = connected ? '\uFEF6' : '\uFEF5';
+            else if (isHamzaAbove) text[i] = connected ? '\uFEF8' : '\uFEF7';
+            else if (isHamzaBelow) text[i] = connected ? '\uFEFA' : '\uFEF9';
+            else text[i] = connected ? '\uFEFC' : '\uFEFB';
 
             // Keep the terminal's fixed cell positions and character mapping.
             text[alefIndex] = ' ';
         }
-    }}
+    }
+}
