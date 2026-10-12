@@ -132,6 +132,7 @@ public final class TerminalRenderer {
             int lastRunStartColumn = -1;
             int lastRunStartIndex = 0;
             boolean lastRunFontWidthMismatch = false;
+            boolean lastRunArabicPresentationForm = false;
             int currentCharIndex = 0;
             float measuredWidthForRun = 0.f;
 
@@ -160,12 +161,20 @@ public final class TerminalRenderer {
                 // This could happen for some fonts which are not truly monospace, or for more exotic characters such as
                 // smileys which android font renders as wide.
                 // If this is detected, we draw this code point scaled to match what wcwidth() expects.
-                final Paint measurePaint = isArabicPresentationForm(codePoint) ? mArabicFallbackPaint : mTextPaint;
+                final boolean arabicPresentationForm = isArabicPresentationForm(codePoint);
+                final Paint measurePaint = arabicPresentationForm ? mArabicFallbackPaint : mTextPaint;
                 final float measuredCodePointWidth = (codePoint < asciiMeasures.length) ? asciiMeasures[codePoint] : measurePaint.measureText(line,
                     currentCharIndex, charsForCodePoint);
                 final boolean fontWidthMismatch = Math.abs(measuredCodePointWidth / mFontWidth - codePointWcWidth) > 0.01;
 
-                if (style != lastRunStyle || insideCursor != lastRunInsideCursor || insideSelection != lastRunInsideSelection || fontWidthMismatch || lastRunFontWidthMismatch || hasArabic) {
+                // Draw a whole same-style Arabic word/run together. Flushing each
+                // pre-shaped letter separately stretches every glyph into its own
+                // cell and creates visible gaps between otherwise connected forms.
+                // Split only when the run crosses a style/cursor/selection/font class.
+                if (style != lastRunStyle || insideCursor != lastRunInsideCursor ||
+                    insideSelection != lastRunInsideSelection ||
+                    fontWidthMismatch != lastRunFontWidthMismatch ||
+                    arabicPresentationForm != lastRunArabicPresentationForm) {
                     if (column == 0) {
                         // Skip first column as there is nothing to draw, just record the current style.
                     } else {
@@ -187,6 +196,7 @@ public final class TerminalRenderer {
                     lastRunStartColumn = column;
                     lastRunStartIndex = currentCharIndex;
                     lastRunFontWidthMismatch = fontWidthMismatch;
+                    lastRunArabicPresentationForm = arabicPresentationForm;
                 }
                 measuredWidthForRun += measuredCodePointWidth;
                 column += codePointWcWidth;
