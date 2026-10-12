@@ -8,6 +8,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Typeface;
+
+import java.io.File;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -514,8 +516,28 @@ public final class TerminalView extends View {
      *
      * @param textSize the new font size, in density-independent pixels.
      */
+    private Typeface getInitialTypeface() {
+        // Honor a user-installed Termux font first.
+        try {
+            File customFont = new File(getContext().getFilesDir(), "home/.termux/font.ttf");
+            if (customFont.isFile() && customFont.canRead()) {
+                return Typeface.createFromFile(customFont);
+            }
+        } catch (RuntimeException ignored) {
+            // Fall through to the bundled Arabic-capable monospace font.
+        }
+
+        try {
+            return Typeface.createFromAsset(getContext().getAssets(), "KawkabMono-Regular.ttf");
+        } catch (RuntimeException ignored) {
+            // Keep Termux usable if the bundled asset is unavailable.
+            return Typeface.MONOSPACE;
+        }
+    }
+
     public void setTextSize(int textSize) {
-        mRenderer = new TerminalRenderer(textSize, mRenderer == null ? Typeface.MONOSPACE : mRenderer.mTypeface);
+        Typeface typeface = mRenderer == null ? getInitialTypeface() : mRenderer.mTypeface;
+        mRenderer = new TerminalRenderer(textSize, typeface);
         updateSize();
     }
 
