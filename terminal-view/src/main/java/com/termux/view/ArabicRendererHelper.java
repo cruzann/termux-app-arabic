@@ -59,8 +59,8 @@ public class ArabicRendererHelper {
     public static LineResult reshapeAndReorder(char[] text, int count, char prevChar, char nextChar) {
         if (text == null) return null;
         int len = text.length;
-        int activeCount = Math.min(count, len);
-        if (activeCount <= 0) {
+        int activeCount = Math.max(0, Math.min(count, len));
+        if (activeCount == 0) {
             LineResult result = new LineResult();
             result.text = text.clone();
             result.visualToLogicalMap = new int[len];
@@ -68,89 +68,95 @@ public class ArabicRendererHelper {
             return result;
         }
 
-        // Shape the Arabic characters
+        // Bidi analysis must use the original Unicode characters. Unicode
+        // Arabic Presentation Forms are treated as already visually ordered
+        // by java.text.Bidi, which can make Arabic output appear reversed.
+        char[] logical = new char[activeCount];
         char[] shaped = new char[activeCount];
-        for (int i = 0; i < activeCount; i++) shaped[i] = text[i];
+        System.arraycopy(text, 0, logical, 0, activeCount);
+        System.arraycopy(logical, 0, shaped, 0, activeCount);
         shapeArabic(shaped, prevChar, nextChar);
 
-        // Convert back to string for Bidi
-        String shapedString = new String(shaped);
-        LineResult result = reorder(shapedString);
-
-        // Reconstruct the full text array with trailing characters
+        LineResult visual = reorder(new String(logical), shaped);
         char[] fullText = new char[len];
-        System.arraycopy(result.text, 0, fullText, 0, result.text.length);
-        for (int i = result.text.length; i < len; i++) {
-            fullText[i] = text[i];
-        }
-
         int[] fullMap = new int[len];
-        System.arraycopy(result.visualToLogicalMap, 0, fullMap, 0, result.visualToLogicalMap.length);
-        for (int i = result.visualToLogicalMap.length; i < len; i++) {
+        System.arraycopy(visual.text, 0, fullText, 0, activeCount);
+        System.arraycopy(visual.visualToLogicalMap, 0, fullMap, 0, activeCount);
+        for (int i = activeCount; i < len; i++) {
+            fullText[i] = text[i];
             fullMap[i] = i;
         }
 
-        result.text = fullText;
-        result.visualToLogicalMap = fullMap;
-        return result;
+        visual.text = fullText;
+        visual.visualToLogicalMap = fullMap;
+        return visual;
     }
 
-    private static LineResult reorder(String text) {
-        int len = text.length();
+    private static LineResult reorder(String logicalText, char[] shapedText) {
+        int len = logicalText.length();
         char[] visualText = new char[len];
         int[] map = new int[len];
         for (int i = 0; i < len; i++) map[i] = i;
 
         try {
-            Bidi bidi = new Bidi(text, Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT);
+            Bidi bidi = new Bidi(logicalText, Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT);
             if (bidi.isLeftToRight()) {
-                for (int i = 0; i < len; i++) visualText[i] = text.charAt(i);
+                System.arraycopy(shapedText, 0, visualText, 0, len);
                 LineResult result = new LineResult();
                 result.text = visualText;
                 result.visualToLogicalMap = map;
                 return result;
             }
 
-            int count = bidi.getRunCount();
+            int runCount = bidi.getRunCount();
+            byte[] levels = new byte[runCount];
+            Integer[] runOrder = new Integer[runCount];
+            for (int i = 0; i < runCount; i++) {
+                levels[i] = (byte) bidi.getRunLevel(i);
+                runOrder[i] = i;
+            }
+            // Bidi runs are returned in logical order. Reorder the run indices
+            // once, based on their embedding levels, to obtain visual order.
+            Bidi.reorderVisually(levels, 0, runOrder, 0, runCount);
 
-            // java.text.Bidi exposes runs in visual order. Do not reorder the
-            // run indices again: doing so reverses mixed Arabic/Latin text twice.
             int visualIndex = 0;
-            for (int index = 0; index < count; index++) {
-                int runStart = bidi.getRunStart(index);
-                int runLimit = bidi.getRunLimit(index);
-                int level = bidi.getRunLevel(index);
-                if ((level & 1) != 0) { // RTL run
-                    // Reverse grapheme-like clusters, not code units, so tashkeel
-                    // stays attached to its Arabic base letter.
+            for (int visualRun = 0; visualRun < runCount; visualRun++) {
+                int logicalRun = runOrder[visualRun];
+                int runStart = bidi.getRunStart(logicalRun);
+                int runLimit = bidi.getRunLimit(logicalRun);
+                int level = bidi.getRunLevel(logicalRun);
+
+                if ((level & 1) != 0) {
+                    // Reverse character clusters so vowel marks remain attached
+                    // to their base characters in a right-to-left run.
                     int j = runLimit - 1;
                     while (j >= runStart) {
                         int clusterStart = j;
-                        while (clusterStart > runStart && isTashkeel(text.charAt(clusterStart))) {
+                        while (clusterStart > runStart && isTashkeel(logicalText.charAt(clusterStart))) {
                             clusterStart--;
                         }
                         for (int k = clusterStart; k <= j; k++) {
-                            visualText[visualIndex] = mirrorChar(text.charAt(k));
+                            visualText[visualIndex] = mirrorChar(shapedText[k]);
                             map[visualIndex] = k;
                             visualIndex++;
                         }
                         j = clusterStart - 1;
                     }
-                } else { // LTR run
+                } else {
                     for (int j = runStart; j < runLimit; j++) {
-                        visualText[visualIndex] = text.charAt(j);
+                        visualText[visualIndex] = shapedText[j];
                         map[visualIndex] = j;
                         visualIndex++;
                     }
                 }
             }
+
             LineResult result = new LineResult();
             result.text = visualText;
             result.visualToLogicalMap = map;
             return result;
         } catch (Exception e) {
-            // Fallback
-            for (int i = 0; i < len; i++) visualText[i] = text.charAt(i);
+            System.arraycopy(shapedText, 0, visualText, 0, len);
             LineResult result = new LineResult();
             result.text = visualText;
             result.visualToLogicalMap = map;
