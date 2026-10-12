@@ -21,6 +21,9 @@ public final class TerminalRenderer {
     final int mTextSize;
     final Typeface mTypeface;
     private final Paint mTextPaint = new Paint();
+    /** Android fallback used for Arabic Presentation Forms not covered correctly by Kawkab Mono. */
+    private final Paint mArabicFallbackPaint = new Paint();
+    private final Typeface mArabicFallbackTypeface = Typeface.create("monospace", Typeface.NORMAL);
 
     /** The width of a single mono spaced character obtained by {@link Paint#measureText(String)} on a single 'X'. */
     final float mFontWidth;
@@ -40,6 +43,14 @@ public final class TerminalRenderer {
         mTextPaint.setTypeface(typeface);
         mTextPaint.setAntiAlias(true);
         mTextPaint.setTextSize(textSize);
+
+        // Kawkab Mono is useful for normal Arabic/Latin monospace text, but some
+        // builds lack specific Arabic Presentation Form glyphs used by the
+        // terminal shaper. Measure and draw those forms with Android's system
+        // monospace fallback instead of rendering .notdef boxes.
+        mArabicFallbackPaint.setTypeface(mArabicFallbackTypeface);
+        mArabicFallbackPaint.setAntiAlias(true);
+        mArabicFallbackPaint.setTextSize(textSize);
 
         mFontLineSpacing = (int) Math.ceil(mTextPaint.getFontSpacing());
         mFontAscent = (int) Math.ceil(mTextPaint.ascent());
@@ -149,7 +160,8 @@ public final class TerminalRenderer {
                 // This could happen for some fonts which are not truly monospace, or for more exotic characters such as
                 // smileys which android font renders as wide.
                 // If this is detected, we draw this code point scaled to match what wcwidth() expects.
-                final float measuredCodePointWidth = (codePoint < asciiMeasures.length) ? asciiMeasures[codePoint] : mTextPaint.measureText(line,
+                final Paint measurePaint = isArabicPresentationForm(codePoint) ? mArabicFallbackPaint : mTextPaint;
+                final float measuredCodePointWidth = (codePoint < asciiMeasures.length) ? asciiMeasures[codePoint] : measurePaint.measureText(line,
                     currentCharIndex, charsForCodePoint);
                 final boolean fontWidthMismatch = Math.abs(measuredCodePointWidth / mFontWidth - codePointWcWidth) > 0.01;
 
@@ -275,10 +287,32 @@ public final class TerminalRenderer {
             mTextPaint.setColor(foreColor);
 
             // The text alignment is the default Paint.Align.LEFT.
-            canvas.drawTextRun(text, startCharIndex, runWidthChars, startCharIndex, runWidthChars, left, y - mFontLineSpacingAndAscent, false, mTextPaint);
+            Typeface originalTypeface = mTextPaint.getTypeface();
+            boolean useArabicFallback = containsArabicPresentationForm(text, startCharIndex, runWidthChars);
+            if (useArabicFallback) mTextPaint.setTypeface(mArabicFallbackTypeface);
+            try {
+                canvas.drawTextRun(text, startCharIndex, runWidthChars, startCharIndex, runWidthChars, left, y - mFontLineSpacingAndAscent, false, mTextPaint);
+            } finally {
+                if (useArabicFallback) mTextPaint.setTypeface(originalTypeface);
+            }
         }
 
         if (savedMatrix) canvas.restore();
+    }
+
+    private static boolean isArabicPresentationForm(int codePoint) {
+        return (codePoint >= 0xFB50 && codePoint <= 0xFDFF)
+            || (codePoint >= 0xFE70 && codePoint <= 0xFEFF);
+    }
+
+    private static boolean containsArabicPresentationForm(char[] text, int start, int count) {
+        int end = Math.min(text.length, start + count);
+        for (int i = Math.max(0, start); i < end; i++) {
+            char c = text[i];
+            if (isArabicPresentationForm(c)) return true;
+            if (Character.isHighSurrogate(c) && i + 1 < end) i++;
+        }
+        return false;
     }
 
     public float getFontWidth() {
