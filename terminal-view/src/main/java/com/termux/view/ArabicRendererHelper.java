@@ -59,8 +59,8 @@ public class ArabicRendererHelper {
     public static LineResult reshapeAndReorder(char[] text, int count, char prevChar, char nextChar) {
         if (text == null) return null;
         int len = text.length;
-        int activeCount = Math.min(count, len);
-        if (activeCount <= 0) {
+        int activeCount = Math.max(0, Math.min(count, len));
+        if (activeCount == 0) {
             LineResult result = new LineResult();
             result.text = text.clone();
             result.visualToLogicalMap = new int[len];
@@ -68,85 +68,95 @@ public class ArabicRendererHelper {
             return result;
         }
 
-        // Shape the Arabic characters
+        // Analyze direction from the original logical Unicode characters,
+        // then apply the resulting visual order to the shaped glyphs. This also
+        // keeps the visual-to-logical map aligned with terminal cell positions.
+        char[] logical = new char[activeCount];
         char[] shaped = new char[activeCount];
-        for (int i = 0; i < activeCount; i++) shaped[i] = text[i];
+        System.arraycopy(text, 0, logical, 0, activeCount);
+        System.arraycopy(logical, 0, shaped, 0, activeCount);
         shapeArabic(shaped, prevChar, nextChar);
 
-        // Convert back to string for Bidi
-        String shapedString = new String(shaped);
-        LineResult result = reorder(shapedString);
-
-        // Reconstruct the full text array with trailing characters
+        LineResult visual = reorder(new String(logical), shaped);
         char[] fullText = new char[len];
-        System.arraycopy(result.text, 0, fullText, 0, result.text.length);
-        for (int i = result.text.length; i < len; i++) {
-            fullText[i] = text[i];
-        }
-
         int[] fullMap = new int[len];
-        System.arraycopy(result.visualToLogicalMap, 0, fullMap, 0, result.visualToLogicalMap.length);
-        for (int i = result.visualToLogicalMap.length; i < len; i++) {
+        System.arraycopy(visual.text, 0, fullText, 0, activeCount);
+        System.arraycopy(visual.visualToLogicalMap, 0, fullMap, 0, activeCount);
+        for (int i = activeCount; i < len; i++) {
+            fullText[i] = text[i];
             fullMap[i] = i;
         }
 
-        result.text = fullText;
-        result.visualToLogicalMap = fullMap;
-        return result;
+        visual.text = fullText;
+        visual.visualToLogicalMap = fullMap;
+        return visual;
     }
 
-    private static LineResult reorder(String text) {
-        int len = text.length();
+    private static LineResult reorder(String logicalText, char[] shapedText) {
+        int len = logicalText.length();
         char[] visualText = new char[len];
         int[] map = new int[len];
         for (int i = 0; i < len; i++) map[i] = i;
 
         try {
-            Bidi bidi = new Bidi(text, Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT);
+            Bidi bidi = new Bidi(logicalText, Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT);
             if (bidi.isLeftToRight()) {
-                for (int i = 0; i < len; i++) visualText[i] = text.charAt(i);
+                System.arraycopy(shapedText, 0, visualText, 0, len);
                 LineResult result = new LineResult();
                 result.text = visualText;
                 result.visualToLogicalMap = map;
                 return result;
             }
 
-            int count = bidi.getRunCount();
-            byte[] levels = new byte[count];
-            Integer[] runs = new Integer[count];
-            for (int i = 0; i < count; i++) {
+            int runCount = bidi.getRunCount();
+            byte[] levels = new byte[runCount];
+            Integer[] runOrder = new Integer[runCount];
+            for (int i = 0; i < runCount; i++) {
                 levels[i] = (byte) bidi.getRunLevel(i);
-                runs[i] = i;
+                runOrder[i] = i;
             }
-            Bidi.reorderVisually(levels, 0, runs, 0, count);
+            // Bidi runs are returned in logical order. Reorder the run indices
+            // once, based on their embedding levels, to obtain visual order.
+            Bidi.reorderVisually(levels, 0, runOrder, 0, runCount);
 
             int visualIndex = 0;
-            for (int i = 0; i < count; i++) {
-                int index = runs[i];
-                int runStart = bidi.getRunStart(index);
-                int runLimit = bidi.getRunLimit(index);
-                int level = bidi.getRunLevel(index);
-                if ((level & 1) != 0) { // RTL run
-                    for (int j = runLimit - 1; j >= runStart; j--) {
-                        visualText[visualIndex] = mirrorChar(text.charAt(j));
-                        map[visualIndex] = j;
-                        visualIndex++;
+            for (int visualRun = 0; visualRun < runCount; visualRun++) {
+                int logicalRun = runOrder[visualRun];
+                int runStart = bidi.getRunStart(logicalRun);
+                int runLimit = bidi.getRunLimit(logicalRun);
+                int level = bidi.getRunLevel(logicalRun);
+
+                if ((level & 1) != 0) {
+                    // Reverse character clusters so vowel marks remain attached
+                    // to their base characters in a right-to-left run.
+                    int j = runLimit - 1;
+                    while (j >= runStart) {
+                        int clusterStart = j;
+                        while (clusterStart > runStart && isTashkeel(logicalText.charAt(clusterStart))) {
+                            clusterStart--;
+                        }
+                        for (int k = clusterStart; k <= j; k++) {
+                            visualText[visualIndex] = mirrorChar(shapedText[k]);
+                            map[visualIndex] = k;
+                            visualIndex++;
+                        }
+                        j = clusterStart - 1;
                     }
-                } else { // LTR run
+                } else {
                     for (int j = runStart; j < runLimit; j++) {
-                        visualText[visualIndex] = text.charAt(j);
+                        visualText[visualIndex] = shapedText[j];
                         map[visualIndex] = j;
                         visualIndex++;
                     }
                 }
             }
+
             LineResult result = new LineResult();
             result.text = visualText;
             result.visualToLogicalMap = map;
             return result;
         } catch (Exception e) {
-            // Fallback
-            for (int i = 0; i < len; i++) visualText[i] = text.charAt(i);
+            System.arraycopy(shapedText, 0, visualText, 0, len);
             LineResult result = new LineResult();
             result.text = visualText;
             result.visualToLogicalMap = map;
@@ -222,101 +232,44 @@ public class ArabicRendererHelper {
     }
 
     private static void shapeArabic(char[] text, char prevChar, char nextChar) {
-        for (int i = 0; i < text.length; i++) {
-            int gIdx = getGlyphIndex(text[i]);
-            if (gIdx == -1) continue;
+        // Keep the original logical text immutable during shaping. Mutating the
+        // input while inspecting neighbors caused already-shaped presentation
+        // forms to be mistaken for non-Arabic characters, breaking joining.
+        final char[] original = text.clone();
 
-            boolean connectRight = false;
-            boolean connectLeft = false;
+        for (int i = 0; i < original.length; i++) {
+            int glyphIndex = getGlyphIndex(original[i]);
+            if (glyphIndex < 0) continue;
 
-            // Check right connectivity (previous logical char)
-            boolean foundRight = false;
-            for (int j = i - 1; j >= 0; j--) {
-                char prev = text[j];
-                if (isTashkeel(prev)) continue;
-                int prevIdx = getGlyphIndex(prev);
-                if (prevIdx != -1) {
-                    if (ARABIC_GLYPHS[prevIdx][5] == 2) {
-                        connectRight = true;
-                    }
-                }
-                foundRight = true;
-                break;
-            }
-            if (!foundRight && prevChar != 0 && !isTashkeel(prevChar)) {
-                int prevIdx = getGlyphIndex(prevChar);
-                if (prevIdx != -1) {
-                    if (ARABIC_GLYPHS[prevIdx][5] == 2) {
-                        connectRight = true;
-                    }
-                }
-            }
+            int previousIndex = i - 1;
+            while (previousIndex >= 0 && isTashkeel(original[previousIndex])) previousIndex--;
+            char previousChar = previousIndex >= 0 ? original[previousIndex] : prevChar;
+            int previousGlyph = getGlyphIndex(previousChar);
+            // The character to the right must be dual-joining for this letter
+            // to connect to it on its right side.
+            boolean connectRight = previousGlyph >= 0 && ARABIC_GLYPHS[previousGlyph][5] == 2;
 
-            // Check left connectivity (next logical char)
-            boolean foundLeft = false;
-            for (int j = i + 1; j < text.length; j++) {
-                char next = text[j];
-                if (isTashkeel(next)) continue;
-                int nextIdx = getGlyphIndex(next);
-                if (nextIdx != -1) {
-                    connectLeft = true;
-                }
-                foundLeft = true;
-                break;
-            }
-            if (!foundLeft && nextChar != 0 && !isTashkeel(nextChar)) {
-                int nextIdx = getGlyphIndex(nextChar);
-                if (nextIdx != -1) {
-                    connectLeft = true;
-                }
-            }
+            int nextIndex = i + 1;
+            while (nextIndex < original.length && isTashkeel(original[nextIndex])) nextIndex++;
+            char followingChar = nextIndex < original.length ? original[nextIndex] : nextChar;
+            int followingGlyph = getGlyphIndex(followingChar);
+            // The character to the left must be able to join on its right;
+            // non-joining hamza must not create a false connection.
+            boolean connectLeft = followingGlyph >= 0 && ARABIC_GLYPHS[followingGlyph][5] != 0;
 
-            int type = ARABIC_GLYPHS[gIdx][5];
-            if (type == 0) { // No connections (Hamza)
-                text[i] = ARABIC_GLYPHS[gIdx][1];
-            } else if (type == 1) { // Connects right only
-                if (connectRight) text[i] = ARABIC_GLYPHS[gIdx][4];
-                else text[i] = ARABIC_GLYPHS[gIdx][1];
-            } else if (type == 2) { // Connects both sides
-                if (connectRight && connectLeft) text[i] = ARABIC_GLYPHS[gIdx][3];
-                else if (connectRight) text[i] = ARABIC_GLYPHS[gIdx][4];
-                else if (connectLeft) text[i] = ARABIC_GLYPHS[gIdx][2];
-                else text[i] = ARABIC_GLYPHS[gIdx][1];
+            int joiningType = ARABIC_GLYPHS[glyphIndex][5];
+            if (joiningType == 0) {
+                text[i] = ARABIC_GLYPHS[glyphIndex][1];
+            } else if (joiningType == 1) {
+                text[i] = connectRight ? ARABIC_GLYPHS[glyphIndex][4] : ARABIC_GLYPHS[glyphIndex][1];
+            } else {
+                if (connectRight && connectLeft) text[i] = ARABIC_GLYPHS[glyphIndex][3];
+                else if (connectRight) text[i] = ARABIC_GLYPHS[glyphIndex][4];
+                else if (connectLeft) text[i] = ARABIC_GLYPHS[glyphIndex][2];
+                else text[i] = ARABIC_GLYPHS[glyphIndex][1];
             }
         }
-        
-        // Handle Lam-Alef ligatures
-        for (int i = 0; i < text.length - 1; i++) {
-            char c = text[i];
-            if (c == '\uFEDD' || c == '\uFEDE') { // Lam Initial or Lam Medial
-                // Find next non-tashkeel
-                int nextIdx = -1;
-                for (int j = i + 1; j < text.length; j++) {
-                    if (!isTashkeel(text[j])) {
-                        nextIdx = j;
-                        break;
-                    }
-                }
-                if (nextIdx != -1) {
-                    char next = text[nextIdx];
-                    char ligature = 0;
-                    if (c == '\uFEDD') { // Lam Initial (no right connection)
-                        if (next == '\uFE8E') ligature = '\uFEFB'; // Alef Final -> Lam-Alef Isolated
-                        else if (next == '\uFE82') ligature = '\uFEF5'; // Alef Madda Final -> Lam-Alef Madda Isolated
-                        else if (next == '\uFE84') ligature = '\uFEF7'; // Alef Hamza Above Final -> Lam-Alef Hamza Above Iso
-                        else if (next == '\uFE88') ligature = '\uFEF9'; // Alef Hamza Below Final -> Lam-Alef Hamza Below Iso
-                    } else if (c == '\uFEDE') { // Lam Medial (has right connection)
-                        if (next == '\uFE8E') ligature = '\uFEFC'; // Alef Final -> Lam-Alef Final
-                        else if (next == '\uFE82') ligature = '\uFEF6';
-                        else if (next == '\uFE84') ligature = '\uFEF8';
-                        else if (next == '\uFE88') ligature = '\uFEFA';
-                    }
-                    if (ligature != 0) {
-                        text[i] = ligature;
-                        text[nextIdx] = '\u0020'; // Replace Alef with a space to preserve length and array mapping
-                    }
-                }
-            }
-        }
+
+
     }
 }
