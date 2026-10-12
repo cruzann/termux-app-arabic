@@ -99,7 +99,10 @@ public class ArabicRendererHelper {
         for (int i = 0; i < len; i++) map[i] = i;
 
         try {
-            Bidi bidi = new Bidi(logicalText, Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT);
+            // A terminal row is a fixed left-to-right grid even when its first strong
+            // character is Arabic. Letting neutral frame characters inherit RTL paragraph
+            // direction can move ASCII/box-drawing borders across the whole row.
+            Bidi bidi = new Bidi(logicalText, Bidi.DIRECTION_LEFT_TO_RIGHT);
             if (bidi.isLeftToRight()) {
                 System.arraycopy(shapedText, 0, visualText, 0, len);
                 LineResult result = new LineResult();
