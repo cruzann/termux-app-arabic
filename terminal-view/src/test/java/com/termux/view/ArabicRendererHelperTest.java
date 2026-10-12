@@ -28,9 +28,10 @@ public class ArabicRendererHelperTest {
         ArabicRendererHelper.LineResult result = render("بب");
         String visual = new String(result.text);
 
-        // Beh final and initial presentation forms should both be produced.
-        assertTrue("Expected final Beh form", visual.indexOf('\uFE90') >= 0);
-        assertTrue("Expected initial Beh form", visual.indexOf('\uFE91') >= 0);
+        // In visual left-to-right cell order, the logical second letter appears first.
+        assertTrue("Expected two rendered Arabic cells", visual.length() >= 2);
+        assertEquals("Rightmost logical Beh should render first", '\uFE90', visual.charAt(0));
+        assertEquals("Leftmost logical Beh should render second", '\uFE91', visual.charAt(1));
     }
 
     @Test
