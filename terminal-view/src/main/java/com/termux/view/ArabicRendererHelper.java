@@ -9,6 +9,18 @@ public class ArabicRendererHelper {
         public int[] visualToLogicalMap;
     }
 
+    /**
+     * Return the used prefix without stale trailing blank cells. TerminalRow may keep
+     * mSpaceUsed at an older extent after redraws/resizes; those blank cells must not
+     * participate in bidi analysis or determine where an Arabic-only output is aligned.
+     */
+    public static int getVisibleLength(char[] text, int count) {
+        if (text == null || count <= 0) return 0;
+        int end = Math.min(count, text.length);
+        while (end > 0 && text[end - 1] == ' ') end--;
+        return end;
+    }
+
     public static boolean hasArabic(char[] text, int start, int count) {
         if (text == null) return false;
         int end = Math.min(start + count, text.length);
