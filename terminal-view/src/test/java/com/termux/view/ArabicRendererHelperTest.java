@@ -74,6 +74,38 @@ public class ArabicRendererHelperTest {
     }
 
     @Test
+    public void identifiesArabicOnlyOutputWithoutReclassifyingMixedText() {
+        assertTrue(ArabicRendererHelper.isArabicOnlyLine("السلام عليكم".toCharArray(), "السلام عليكم".length()));
+        assertFalse(ArabicRendererHelper.isArabicOnlyLine("Mixed text: English 123 عربي".toCharArray(),
+            "Mixed text: English 123 عربي".length()));
+        assertFalse(ArabicRendererHelper.isArabicOnlyLine("│ جسر عربي v1.0 │".toCharArray(),
+            "│ جسر عربي v1.0 │".length()));
+    }
+
+    @Test
+    public void rightAlignsArabicOutputAndPreservesColumnMapping() {
+        String word = "اختبار";
+        char[] row = new char[16];
+        Arrays.fill(row, ' ');
+        word.getChars(0, word.length(), row, 0);
+
+        ArabicRendererHelper.LineResult result = ArabicRendererHelper.reshapeAndReorder(row, word.length());
+        result = ArabicRendererHelper.rightAlignVisualLine(result, word.length());
+
+        int start = row.length - word.length();
+        for (int i = 0; i < start; i++) {
+            assertEquals("Leading cells should be blank", ' ', result.text[i]);
+            assertEquals("Leading blank cells map to original trailing blanks", word.length() + i,
+                result.visualToLogicalMap[i]);
+        }
+        int[] sortedMap = Arrays.copyOf(result.visualToLogicalMap, result.visualToLogicalMap.length);
+        Arrays.sort(sortedMap);
+        for (int i = 0; i < sortedMap.length; i++) {
+            assertEquals("Right alignment must preserve a complete cell mapping", i, sortedMap[i]);
+        }
+    }
+
+    @Test
     public void keepsTashkeelAttachedToItsArabicBase() {
         ArabicRendererHelper.LineResult result = render("بَت");
         String visual = new String(result.text);
