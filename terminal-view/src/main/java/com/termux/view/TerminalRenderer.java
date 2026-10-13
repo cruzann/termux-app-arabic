@@ -99,9 +99,18 @@ public final class TerminalRenderer {
             ArabicRendererHelper.LineResult arabicResult = null;
             int[] charToColMap = null;
             if (hasArabic) {
+                int originalCharsUsedInLine = charsUsedInLine;
                 char prevChar = ArabicRendererHelper.getPrevChar(screen, row);
                 char nextChar = ArabicRendererHelper.getNextChar(screen, row, lineObject);
                 arabicResult = ArabicRendererHelper.reshapeAndReorder(line, charsUsedInLine, prevChar, nextChar);
+
+                // Completed Arabic-only output lines should read naturally from the right
+                // edge. Do not shift the active cursor row or mixed lines containing
+                // commands, numbers, IP addresses, or box-drawing UI.
+                if (row != cursorRow && ArabicRendererHelper.isArabicOnlyLine(line, originalCharsUsedInLine)) {
+                    arabicResult = ArabicRendererHelper.rightAlignVisualLine(arabicResult, originalCharsUsedInLine);
+                }
+
                 line = arabicResult.text;
                 charsUsedInLine = line.length;
 
@@ -299,10 +308,26 @@ public final class TerminalRenderer {
             // The text alignment is the default Paint.Align.LEFT.
             Typeface originalTypeface = mTextPaint.getTypeface();
             boolean useArabicFallback = containsArabicPresentationForm(text, startCharIndex, runWidthChars);
+            boolean compressArabicRun = useArabicFallback && runWidthColumns > 1;
+            boolean savedArabicMatrix = false;
             if (useArabicFallback) mTextPaint.setTypeface(mArabicFallbackTypeface);
+
+            // Slightly tighten Arabic words without changing terminal cell widths,
+            // selection backgrounds, or cursor placement. Center the glyphs in the
+            // run's existing cell rectangle to avoid drifting the next character.
+            if (compressArabicRun) {
+                final float glyphScale = 0.94f;
+                final float runWidth = right - left;
+                canvas.save();
+                canvas.translate(left * (1.f - glyphScale) + runWidth * (1.f - glyphScale) / 2.f, 0);
+                canvas.scale(glyphScale, 1.f);
+                savedArabicMatrix = true;
+            }
+
             try {
                 canvas.drawTextRun(text, startCharIndex, runWidthChars, startCharIndex, runWidthChars, left, y - mFontLineSpacingAndAscent, false, mTextPaint);
             } finally {
+                if (savedArabicMatrix) canvas.restore();
                 if (useArabicFallback) mTextPaint.setTypeface(originalTypeface);
             }
         }
