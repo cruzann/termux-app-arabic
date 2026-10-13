@@ -83,6 +83,40 @@ public class ArabicRendererHelperTest {
     }
 
     @Test
+    public void ignoresStaleTrailingSpacesWhenMeasuringVisibleArabicText() {
+        char[] shortRow = "اختبار        ".toCharArray();
+        char[] longRow = "اختبار                                ".toCharArray();
+
+        assertEquals("Visible length must stop at the last non-space", "اختبار".length(),
+            ArabicRendererHelper.getVisibleLength(shortRow, shortRow.length));
+        assertEquals("Wider rows must not change visible text length", "اختبار".length(),
+            ArabicRendererHelper.getVisibleLength(longRow, longRow.length));
+        assertEquals("An empty/space-only row has no visible content", 0,
+            ArabicRendererHelper.getVisibleLength("          ".toCharArray(), 10));
+    }
+
+    @Test
+    public void rightAlignedArabicWordIsStableAcrossTerminalWidths() {
+        String word = "اختبار";
+        int[] widths = {16, 36};
+        String expected = null;
+
+        for (int width : widths) {
+            char[] row = new char[width];
+            Arrays.fill(row, ' ');
+            word.getChars(0, word.length(), row, 0);
+
+            int visibleLength = ArabicRendererHelper.getVisibleLength(row, row.length);
+            ArabicRendererHelper.LineResult result = ArabicRendererHelper.reshapeAndReorder(row, visibleLength);
+            result = ArabicRendererHelper.rightAlignVisualLine(result, visibleLength);
+
+            String visible = new String(result.text, width - visibleLength, visibleLength);
+            if (expected == null) expected = visible;
+            else assertEquals("Resizing must not change the shaped/ordered Arabic word", expected, visible);
+        }
+    }
+
+    @Test
     public void rightAlignsArabicOutputAndPreservesColumnMapping() {
         String word = "اختبار";
         char[] row = new char[16];
