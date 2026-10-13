@@ -93,22 +93,23 @@ public final class TerminalRenderer {
 
             TerminalRow lineObject = screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row));
             char[] line = lineObject.mText;
-            int charsUsedInLine = lineObject.getSpaceUsed();
+            int storedCharsUsedInLine = lineObject.getSpaceUsed();
+            int visibleCharsUsedInLine = ArabicRendererHelper.getVisibleLength(line, storedCharsUsedInLine);
+            int charsUsedInLine = storedCharsUsedInLine;
 
-            boolean hasArabic = ArabicRendererHelper.hasArabic(line, 0, charsUsedInLine);
+            boolean hasArabic = ArabicRendererHelper.hasArabic(line, 0, visibleCharsUsedInLine);
             ArabicRendererHelper.LineResult arabicResult = null;
             int[] charToColMap = null;
             if (hasArabic) {
-                int originalCharsUsedInLine = charsUsedInLine;
                 char prevChar = ArabicRendererHelper.getPrevChar(screen, row);
                 char nextChar = ArabicRendererHelper.getNextChar(screen, row, lineObject);
-                arabicResult = ArabicRendererHelper.reshapeAndReorder(line, charsUsedInLine, prevChar, nextChar);
+                arabicResult = ArabicRendererHelper.reshapeAndReorder(line, visibleCharsUsedInLine, prevChar, nextChar);
 
-                // Completed Arabic-only output lines should read naturally from the right
-                // edge. Do not shift the active cursor row or mixed lines containing
-                // commands, numbers, IP addresses, or box-drawing UI.
-                if (row != cursorRow && ArabicRendererHelper.isArabicOnlyLine(line, originalCharsUsedInLine)) {
-                    arabicResult = ArabicRendererHelper.rightAlignVisualLine(arabicResult, originalCharsUsedInLine);
+                // Align only the actual visible text. Do not let stale trailing blanks
+                // retained by TerminalRow after resizing change the bidi paragraph or
+                // move the word based on a previous, wider/narrower screen.
+                if (row != cursorRow && ArabicRendererHelper.isArabicOnlyLine(line, visibleCharsUsedInLine)) {
+                    arabicResult = ArabicRendererHelper.rightAlignVisualLine(arabicResult, visibleCharsUsedInLine);
                 }
 
                 line = arabicResult.text;
@@ -182,7 +183,7 @@ public final class TerminalRenderer {
                 // Split only when the run crosses a style/cursor/selection/font class.
                 if (style != lastRunStyle || insideCursor != lastRunInsideCursor ||
                     insideSelection != lastRunInsideSelection ||
-                    fontWidthMismatch != lastRunFontWidthMismatch ||
+                    (!arabicPresentationForm && fontWidthMismatch != lastRunFontWidthMismatch) ||
                     arabicPresentationForm != lastRunArabicPresentationForm) {
                     if (column == 0) {
                         // Skip first column as there is nothing to draw, just record the current style.
