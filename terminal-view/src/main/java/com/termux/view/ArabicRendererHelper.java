@@ -52,7 +52,7 @@ public class ArabicRendererHelper {
             // Keep common neutral punctuation, but never right-align Latin text,
             // shell commands, IP addresses, digits, or terminal frame characters.
             if (codePoint == '.' || codePoint == ',' || codePoint == ':' || codePoint == ';'
-                || codePoint == '!' || codePoint == '?' || codePoint == '\\''
+                || codePoint == '!' || codePoint == '?' || codePoint == 39
                 || codePoint == '"' || codePoint == '(' || codePoint == ')'
                 || codePoint == '[' || codePoint == ']' || codePoint == '-' || codePoint == '/') {
                 continue;
