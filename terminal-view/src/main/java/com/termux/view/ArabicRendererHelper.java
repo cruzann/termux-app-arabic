@@ -22,6 +22,75 @@ public class ArabicRendererHelper {
         return false;
     }
 
+    private static boolean isArabicCodePoint(int codePoint) {
+        return (codePoint >= 0x0600 && codePoint <= 0x06FF)
+            || (codePoint >= 0x0750 && codePoint <= 0x077F)
+            || (codePoint >= 0xFB50 && codePoint <= 0xFDFF)
+            || (codePoint >= 0xFE70 && codePoint <= 0xFEFF);
+    }
+
+    /**
+     * True for an Arabic-only terminal output line that can be visually aligned
+     * to the right without moving ASCII commands, numbers, or box-drawing UI.
+     */
+    public static boolean isArabicOnlyLine(char[] text, int count) {
+        if (text == null) return false;
+        int end = Math.max(0, Math.min(count, text.length));
+        boolean foundArabic = false;
+        for (int i = 0; i < end; i++) {
+            int codePoint = text[i];
+            if (Character.isHighSurrogate(text[i]) && i + 1 < end &&
+                Character.isLowSurrogate(text[i + 1])) {
+                codePoint = Character.toCodePoint(text[i], text[++i]);
+            }
+
+            if (isArabicCodePoint(codePoint) || Character.isWhitespace(codePoint)) {
+                if (isArabicCodePoint(codePoint)) foundArabic = true;
+                continue;
+            }
+
+            // Keep common neutral punctuation, but never right-align Latin text,
+            // shell commands, IP addresses, digits, or terminal frame characters.
+            if (codePoint == '.' || codePoint == ',' || codePoint == ':' || codePoint == ';'
+                || codePoint == '!' || codePoint == '?' || codePoint == '\\''
+                || codePoint == '"' || codePoint == '(' || codePoint == ')'
+                || codePoint == '[' || codePoint == ']' || codePoint == '-' || codePoint == '/') {
+                continue;
+            }
+            return false;
+        }
+        return foundArabic;
+    }
+
+    /**
+     * Move a shaped visual line to the right edge of the terminal row while
+     * keeping each displayed cell mapped to its original logical column.
+     * This is used only for completed Arabic-only output rows, never the active
+     * cursor row or rows containing Latin/ASCII UI text.
+     */
+    public static LineResult rightAlignVisualLine(LineResult source, int activeCount) {
+        if (source == null || source.text == null || source.visualToLogicalMap == null) return source;
+        int len = source.text.length;
+        int active = Math.max(0, Math.min(activeCount, len));
+        int padding = len - active;
+        if (active == 0 || padding == 0) return source;
+
+        char[] alignedText = new char[len];
+        java.util.Arrays.fill(alignedText, ' ');
+        int[] alignedMap = new int[len];
+
+        // The leading blank cells correspond to the original trailing blank cells.
+        for (int i = 0; i < padding; i++) {
+            alignedMap[i] = active + i;
+        }
+        System.arraycopy(source.text, 0, alignedText, padding, active);
+        System.arraycopy(source.visualToLogicalMap, 0, alignedMap, padding, active);
+
+        source.text = alignedText;
+        source.visualToLogicalMap = alignedMap;
+        return source;
+    }
+
     public static char getPrevChar(com.termux.terminal.TerminalBuffer screen, int row) {
         if (row <= 0) return 0;
         com.termux.terminal.TerminalRow prevLineObject = screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row - 1));
